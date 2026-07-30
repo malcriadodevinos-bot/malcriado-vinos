@@ -1,9 +1,0 @@
-node_modules/
-dist/
-.chrome-profile-lite/
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
-.env
-github_token.txt
