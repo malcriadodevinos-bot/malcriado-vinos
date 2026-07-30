@@ -64,7 +64,10 @@ export default function App() {
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [githubToken, setGithubToken] = useState('');
   const [githubRepo, setGithubRepo] = useState('');
+  const [webUrl, setWebUrl] = useState('');
   const [deployLoading, setDeployLoading] = useState(false);
+  const [supabaseUrl, setSupabaseUrl] = useState('');
+  const [supabaseKey, setSupabaseKey] = useState('');
 
   const [showHelp, setShowHelp] = useState(false);
   const [showCaja, setShowCaja] = useState(false);
@@ -223,6 +226,11 @@ export default function App() {
         const ccData = await ccRes.json();
         if (ccData && ccData.companyName) {
           setCompanyConfig(ccData);
+          if (ccData.githubToken) setGithubToken(ccData.githubToken);
+          if (ccData.githubRepo) setGithubRepo(ccData.githubRepo);
+          if (ccData.webUrl) setWebUrl(ccData.webUrl);
+          if (ccData.supabaseUrl) setSupabaseUrl(ccData.supabaseUrl);
+          if (ccData.supabaseKey) setSupabaseKey(ccData.supabaseKey);
         } else {
           setCompanyConfig(null);
         }
@@ -728,6 +736,32 @@ export default function App() {
                       placeholder="tu-usuario/tu-repo"
                     />
                   </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-mono uppercase block mb-1">URL de la Web</label>
+                    <input
+                      type="text"
+                      value={webUrl}
+                      onChange={e => setWebUrl(e.target.value)}
+                      className="w-full bg-[#181a20] border border-[#2d3444] rounded-lg py-1.5 px-3 text-xs text-white font-mono focus:outline-none"
+                      placeholder="https://..."
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const r = await fetch('/api/company-config', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ githubToken, githubRepo, webUrl })
+                        });
+                        if (r.ok) alert('Datos de sincronización guardados');
+                        else alert('Error al guardar');
+                      } catch {
+                        alert('Error de conexión');
+                      }
+                    }}
+                    className="bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg py-1 px-3 text-[10px] font-semibold transition-colors cursor-pointer"
+                  >Guardar Datos</button>
                   <button
                     onClick={async () => {
                       if (!githubToken || !githubRepo) { alert('Completá Token y Repositorio.'); return; }
@@ -740,7 +774,14 @@ export default function App() {
                         });
                         const data = await r.json();
                         if (data.success) {
-                          alert(`Despliegue iniciado correctamente.\nURL: https://${githubRepo.toLowerCase()}/`);
+                          const url = data.url;
+                          setWebUrl(url);
+                          await fetch('/api/company-config', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ githubToken, githubRepo, webUrl: url })
+                          });
+                          alert(`Web publicada correctamente.\nURL: ${url}`);
                         } else {
                           alert('Error: ' + (data.error || 'desconocido'));
                         }
@@ -755,9 +796,55 @@ export default function App() {
                     {deployLoading && <span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />}
                     {deployLoading ? 'Desplegando...' : 'Desplegar en GitHub Pages'}
                   </button>
+                  {webUrl && (
+                    <p className="text-[10px] text-emerald-400 leading-normal">
+                      Web publicada en: <a href={webUrl} target="_blank" className="underline">{webUrl}</a>
+                    </p>
+                  )}
                   <p className="text-[10px] text-slate-500 leading-normal">
                     Construye la app web y la publica en GitHub Pages. Necesitás un token clásico con permiso <strong className="text-white">repo</strong>.
                   </p>
+                </div>
+
+                <div className="pt-4 border-t border-[#2d3444]/60 space-y-3">
+                  <span className="text-white font-medium block">Supabase (Nube)</span>
+                  <p className="text-[10px] text-slate-500 leading-normal">
+                    Configuración para recibir pedidos desde la web online aunque el servidor local esté apagado.
+                  </p>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-mono uppercase block mb-1">Supabase URL</label>
+                    <input
+                      type="text"
+                      value={supabaseUrl}
+                      onChange={e => setSupabaseUrl(e.target.value)}
+                      className="w-full bg-[#181a20] border border-[#2d3444] rounded-lg py-1.5 px-3 text-xs text-white font-mono focus:outline-none"
+                      placeholder="https://xxxxx.supabase.co"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 font-mono uppercase block mb-1">Anon Key</label>
+                    <input
+                      type="password"
+                      value={supabaseKey}
+                      onChange={e => setSupabaseKey(e.target.value)}
+                      className="w-full bg-[#181a20] border border-[#2d3444] rounded-lg py-1.5 px-3 text-xs text-white font-mono focus:outline-none"
+                      placeholder="eyJhbGciOi..."
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const r = await fetch('/api/company-config', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ supabaseUrl, supabaseKey })
+                        });
+                        if (r.ok) showToast('success', 'Datos de Supabase guardados');
+                        else showToast('error', 'Error al guardar');
+                      } catch { showToast('error', 'Error de conexión'); }
+                    }}
+                    className="bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg py-1 px-3 text-[10px] font-semibold transition-colors cursor-pointer"
+                  >Guardar Datos Supabase</button>
                 </div>
               </div>
             </div>

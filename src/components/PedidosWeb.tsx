@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, ShoppingCart, Trash2, RefreshCw, Eye, CheckCircle, XCircle, Clock, Printer } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, RefreshCw, Eye, CheckCircle, XCircle, Clock, Printer, Cloud } from 'lucide-react';
 
 interface OrderItem {
   name?: string;
@@ -122,12 +122,37 @@ export default function PedidosWeb({ onRefresh }: PedidosWebProps) {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  const syncFromSupabase = async () => {
+    setSyncing(true);
+    try {
+      const r = await fetch('/api/orders/sync-from-supabase', { method: 'POST' });
+      if (r.ok) { const d = await r.json(); if (d.synced > 0) load(); }
+    } catch {}
+    setSyncing(false);
+  };
 
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/orders');
-      if (r.ok) setOrders(await r.json());
+      const [localR, sbR] = await Promise.all([
+        fetch('/api/orders'),
+        fetch('/api/orders/supabase').catch(() => null)
+      ]);
+      let all: Order[] = [];
+      if (localR?.ok) all = await localR.json();
+      if (sbR?.ok) {
+        const sbOrders = await sbR.json();
+        const localIds = new Set(all.map(o => o.id));
+        for (const o of sbOrders) {
+          if (!localIds.has(o.id?.toString())) {
+            all.push({ id: o.id?.toString() || '', date: o.date || '', items: typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []), total: Number(o.total) || 0, clientName: o.client_name || '', clientPhone: o.client_phone || '', notes: o.notes || '', status: o.status || 'nuevo', deliveryType: o.delivery_type || '' });
+          }
+        }
+        all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      }
+      setOrders(all);
     } catch (e) { console.error('[PedidosWeb] Error fetching orders:', e); }
     setLoading(false);
   };
@@ -204,8 +229,12 @@ export default function PedidosWeb({ onRefresh }: PedidosWebProps) {
             <option value="confirmado">Confirmado</option>
             <option value="cancelado">Cancelado</option>
           </select>
-          <button onClick={load} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-[#1a1d24] transition-all cursor-pointer">
+          <button onClick={load} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-[#1a1d24] transition-all cursor-pointer" title="Recargar">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={syncFromSupabase} disabled={syncing} className="flex items-center gap-1.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg py-1.5 px-3 text-[10px] font-semibold transition-colors disabled:opacity-50 cursor-pointer" title="Sincronizar pedidos desde Supabase (nube)">
+            <Cloud size={13} className={syncing ? 'animate-pulse' : ''} />
+            {syncing ? 'Sincronizando...' : 'Sync Nube'}
           </button>
         </div>
       </div>

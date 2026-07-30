@@ -512,6 +512,47 @@ app.put('/api/cash-register', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============ SUPABASE ORDERS SYNC ============
+app.get('/api/orders/supabase', async (req, res) => {
+  try {
+    const cfg = getConfig('companyConfig', {});
+    if (!cfg.supabaseUrl || !cfg.supabaseKey) return res.json([]);
+    const r = await fetch(cfg.supabaseUrl + '/rest/v1/orders?select=*&order=date.desc', {
+      headers: { 'apikey': cfg.supabaseKey, 'Authorization': 'Bearer ' + cfg.supabaseKey }
+    });
+    if (!r.ok) return res.json([]);
+    res.json(await r.json());
+  } catch { res.json([]); }
+});
+
+app.post('/api/orders/sync-from-supabase', async (req, res) => {
+  try {
+    const cfg = getConfig('companyConfig', {});
+    if (!cfg.supabaseUrl || !cfg.supabaseKey) return res.json({ synced: 0 });
+    fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Starting sync\n');
+    const r = await fetch(cfg.supabaseUrl + '/rest/v1/orders?select=*&order=date.desc', {
+      headers: { 'apikey': cfg.supabaseKey, 'Authorization': 'Bearer ' + cfg.supabaseKey }
+    });
+    if (!r.ok) { fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Fetch failed: ' + r.status + '\n'); return res.json({ synced: 0 }); }
+    const orders = await r.json();
+    fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Orders from supabase: ' + orders.length + '\n');
+    const d = getDb();
+    let synced = 0;
+    for (const o of orders) {
+      const existing = d.prepare('SELECT id FROM orders WHERE id = ?').get(o.id?.toString() || '');
+      fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Processing order id=' + o.id + ' existing=' + (existing ? existing.id : 'none') + '\n');
+      if (!existing) {
+        d.prepare(`INSERT INTO orders (id, client_name, client_phone, items, total, notes, delivery_type, status, date) VALUES (?,?,?,?,?,?,?,?,?)`).run(
+          o.id?.toString() || 'sb-' + Date.now(), o.client_name || '', o.client_phone || '', typeof o.items === 'string' ? o.items : JSON.stringify(o.items || []), Number(o.total) || 0, o.notes || '', o.delivery_type || '', o.status || 'nuevo', o.date || new Date().toISOString()
+        );
+        synced++;
+      }
+    }
+    fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Synced: ' + synced + '\n');
+    res.json({ synced });
+  } catch (e) { fs.appendFileSync(require('path').join(require('os').tmpdir(), 'nexus-sync.log'), 'Error: ' + (e?.message || e) + '\n'); res.json({ synced: 0 }); }
+});
+
 // ============ SYNC STATUS & MISC ============
 app.get('/api/auto-sync-status', (req, res) => {
   res.json({ pending: false, syncing: false, lastSync: null, error: null });
@@ -621,6 +662,20 @@ app.post('/api/deploy-ghpages', async (req, res) => {
     if (!fs.existsSync(WEB_DIR)) return res.status(400).json({ success: false, error: 'No se encontró el directorio web/' });
     walkDir(WEB_DIR, '');
 
+    // Generate data.json with current web data
+    try {
+      const d = getDb();
+      const dbProducts = d.prepare("SELECT * FROM products WHERE source = 'web'").all();
+      const categories = d.prepare('SELECT * FROM web_categories ORDER BY name').all();
+      const services = d.prepare('SELECT * FROM web_services ORDER BY name').all();
+      const config = getConfig('webConfig', {});
+      const companyCfg = getConfig('companyConfig', {});
+      const webData = { products: dbProducts, categories, services, config, supabaseUrl: companyCfg.supabaseUrl || '', supabaseKey: companyCfg.supabaseKey || '' };
+      files.push({ path: 'data.json', content: JSON.stringify(webData) });
+    } catch (e) {
+      console.error('[deploy] Error generating data.json:', e.message);
+    }
+
     const treeItems = files.map(f => ({
       path: f.path,
       mode: '100644',
@@ -631,17 +686,17 @@ app.post('/api/deploy-ghpages', async (req, res) => {
     const treeResp = await fetch(`${api}/repos/${repo}/git/trees`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base_tree: baseSha, tree: treeItems }),
+      body: JSON.stringify({ tree: treeItems }),
     });
     if (!treeResp.ok) return res.status(500).json({ success: false, error: 'Error al crear el tree' });
     const treeData = await treeResp.json();
     const treeSha = treeData.sha;
 
-    // 3. Create commit
+    // 3. Create commit (orphan, no parent)
     const commitResp = await fetch(`${api}/repos/${repo}/git/commits`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: 'Deploy Nexus Lite Web', tree: treeSha, parents: [baseSha] }),
+      body: JSON.stringify({ message: 'Deploy Nexus Lite Web', tree: treeSha, parents: [] }),
     });
     if (!commitResp.ok) return res.status(500).json({ success: false, error: 'Error al crear el commit' });
     const commitData = await commitResp.json();
